@@ -1,0 +1,12 @@
+# Copie para terraform.tfvars (ignorado pelo Git) apenas se quiser mudar algo.
+# Todas as variáveis têm valores padrão; as senhas são geradas automaticamente.
+
+# cluster_name       = "banvic"
+# airflow_host_port  = 8080
+# postgres_host_port = 15432
+# source_data_dir    = "C:/caminho/para/banvic_data"   # padrão: ./data/banvic_erp
+
+# Senhas (opcional). Prefira variáveis de ambiente para não gravar em disco:
+#   PowerShell: $env:TF_VAR_airflow_admin_password = "..."
+#   Bash:       export TF_VAR_airflow_admin_password="..."
+# airflow_admin_password = "..."

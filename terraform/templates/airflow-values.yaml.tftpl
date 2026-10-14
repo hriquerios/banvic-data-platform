@@ -1,0 +1,140 @@
+# -----------------------------------------------------------------------------
+# Values do Helm chart oficial do Apache Airflow (renderizado pelo Terraform).
+# Nenhum segredo aparece aqui: apenas NOMES de Secrets Kubernetes.
+# -----------------------------------------------------------------------------
+airflowVersion: "${airflow_version}"
+defaultAirflowRepository: ${airflow_image_repository}
+defaultAirflowTag: "${airflow_image_tag}"
+
+images:
+  airflow:
+    pullPolicy: IfNotPresent
+
+# LocalExecutor: scheduler executa as tasks; a carga pesada roda em pods
+# separados (KubernetesPodOperator), então não precisamos de Celery/Redis.
+executor: LocalExecutor
+
+# Segredos do próprio Airflow (criados pelo Terraform em secrets.tf)
+fernetKeySecretName: ${fernet_secret}
+apiSecretKeySecretName: ${api_secret}
+jwtSecretName: ${jwt_secret}
+data:
+  metadataSecretName: ${metadata_secret}
+
+# Componentes desnecessários para a POC
+postgresql:
+  enabled: false
+redis:
+  enabled: false
+pgbouncer:
+  enabled: false
+statsd:
+  enabled: false
+triggerer:
+  enabled: false
+flower:
+  enabled: false
+
+# O usuário admin é criado por um Job próprio (airflow.tf) que lê a senha de
+# um Secret, em vez de deixar a senha nos values do chart.
+createUserJob:
+  enabled: false
+
+# Sem volumeClaimTemplates: o scheduler roda como Deployment.
+workers:
+  persistence:
+    enabled: false
+  celery:
+    persistence:
+      enabled: false
+
+# DAGs embarcadas na imagem customizada (imutável e versionada pela tag).
+dags:
+  persistence:
+    enabled: false
+  gitSync:
+    enabled: false
+
+# Logs persistidos em PVC próprio + limpeza automática pelo log-groomer.
+logs:
+  persistence:
+    enabled: true
+    existingClaim: ${logs_pvc}
+
+config:
+  core:
+    parallelism: ${parallelism}
+    load_examples: "False"
+  dag_processor:
+    refresh_interval: 60
+  api:
+    expose_config: "False"
+
+scheduler:
+  # Apenas o scheduler (onde o LocalExecutor executa as tasks) recebe a
+  # Connection do DW e as Variables da pipeline. API server e DAG processor
+  # não têm acesso a essas credenciais.
+  env:
+    - name: AIRFLOW_CONN_BANVIC_DW
+      valueFrom:
+        secretKeyRef:
+          name: ${connections_secret}
+          key: AIRFLOW_CONN_BANVIC_DW
+    - name: AIRFLOW_CONN_FS_DEFAULT
+      value: '{"conn_type": "fs", "extra": {"path": "/"}}'
+    - name: AIRFLOW_VAR_BANVIC_SOURCE_DIR
+      value: "${source_mount_path}"
+    - name: AIRFLOW_VAR_BANVIC_INGESTION_IMAGE
+      value: "${meltano_image}"
+    - name: AIRFLOW_VAR_BANVIC_K8S_NAMESPACE
+      value: "${namespace}"
+
+  # Pasta de origem (somente leitura) para o FileSensor e a validação de contrato.
+  extraVolumes:
+    - name: fonte-erp
+      persistentVolumeClaim:
+        claimName: ${source_pvc}
+        readOnly: true
+  extraVolumeMounts:
+    - name: fonte-erp
+      mountPath: ${source_mount_path}
+      readOnly: true
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1536Mi
+
+  logGroomerSidecar:
+    enabled: true
+    retentionDays: ${log_retention_days}
+
+apiServer:
+  service:
+    type: NodePort
+    ports:
+      - name: api-server
+        port: 8080
+        nodePort: ${airflow_node_port}
+  resources:
+    requests:
+      cpu: 150m
+      memory: 448Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+dagProcessor:
+  resources:
+    requests:
+      cpu: 150m
+      memory: 320Mi
+    limits:
+      cpu: 750m
+      memory: 640Mi
+  logGroomerSidecar:
+    enabled: true
+    retentionDays: ${log_retention_days}

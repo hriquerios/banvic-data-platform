@@ -1,0 +1,60 @@
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Inter, Segoe UI, Arial", "fontSize": "15px", "lineColor": "#475569", "primaryColor": "#eef2ff", "clusterBkg": "#f8fafc", "clusterBorder": "#94a3b8"}}}%%
+flowchart LR
+    subgraph HOST["💻 Máquina local"]
+        direction TB
+        CSV["📁 data/banvic_erp<br/>7 CSVs do ERP"]
+        TF["🧱 Terraform<br/>kind · kubernetes · helm · random"]
+        DOCKER["🐳 Docker<br/>build das imagens"]
+    end
+
+    subgraph KIND["☸️ Cluster Kubernetes local (Kind)"]
+        direction LR
+        PV[("PersistentVolume<br/>banvic-fonte-erp<br/>(somente leitura)")]
+
+        subgraph ORQ["namespace: banvic-orquestracao"]
+            direction TB
+            API["Airflow API Server / UI<br/>Deployment · NodePort :8080"]
+            SCH["Airflow Scheduler<br/>Deployment · LocalExecutor"]
+            DP["Airflow DAG Processor<br/>Deployment"]
+            POD["Pods efêmeros de ingestão<br/>KubernetesPodOperator<br/>Meltano: tap-csv ➜ target-postgres<br/>(1 pod por tabela)"]
+            LOGS[("PVC airflow-logs")]
+            S1{{"Secret<br/>banvic-loader-credentials"}}
+            S2{{"Secret<br/>banvic-airflow-connections"}}
+        end
+
+        subgraph DADOS["namespace: banvic-dados"]
+            direction TB
+            PG[("PostgreSQL 16<br/>Deployment + PVC<br/>db banvic · schema raw<br/>db airflow · metadados")]
+            SVC["Service ClusterIP: postgres<br/>Service NodePort: postgres-externo"]
+            JOB["Job postgres-bootstrap<br/>roles · bancos · schema"]
+        end
+    end
+
+    BI["📊 Analistas / BI<br/>DBeaver · Power BI · Databricks AI/BI<br/>localhost:15432"]
+
+    TF -->|provisiona| KIND
+    DOCKER -->|kind load| KIND
+    CSV -->|extraMount| PV
+    PV -->|FileSensor + contrato| SCH
+    PV -->|leitura dos CSVs| POD
+    SCH -->|cria pods| POD
+    S1 -.->|envFrom| POD
+    S2 -.->|AIRFLOW_CONN_BANVIC_DW| SCH
+    POD -->|"carga Full Refresh (overwrite)"| SVC
+    SCH -->|validação somente leitura| SVC
+    SVC --- PG
+    JOB --> PG
+    SCH --- LOGS
+    API --- LOGS
+    PG -->|dados tipados no schema raw| BI
+
+    classDef infra fill:#eef2ff,stroke:#4f46e5,color:#1e1b4b
+    classDef dado fill:#ecfdf5,stroke:#059669,color:#064e3b
+    classDef seg fill:#fff7ed,stroke:#ea580c,color:#7c2d12
+    class API,SCH,DP,POD,JOB,SVC infra
+    class CSV,PV,PG,LOGS,BI dado
+    class S1,S2 seg
+    style HOST fill:#f1f5f9,stroke:#64748b
+    style KIND fill:#f8fafc,stroke:#334155,stroke-width:2px
+    style ORQ fill:#ffffff,stroke:#6366f1,stroke-dasharray: 4 3
+    style DADOS fill:#ffffff,stroke:#10b981,stroke-dasharray: 4 3

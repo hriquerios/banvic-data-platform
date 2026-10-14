@@ -1,0 +1,2 @@
+# Pacote de apoio (não contém DAGs): evita parse desnecessário pelo dag-processor
+banvic/

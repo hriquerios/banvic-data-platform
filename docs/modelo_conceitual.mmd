@@ -1,0 +1,78 @@
+%%{init: {"theme": "neutral"}}%%
+erDiagram
+    CLIENTES ||--o{ CONTAS : "possui"
+    CLIENTES ||--o{ PROPOSTAS_CREDITO : "solicita"
+    AGENCIAS ||--o{ CONTAS : "abriga"
+    COLABORADORES ||--o{ CONTAS : "gerencia"
+    COLABORADORES ||--o{ PROPOSTAS_CREDITO : "analisa"
+    COLABORADORES ||--|| COLABORADOR_AGENCIA : "lotado em"
+    AGENCIAS ||--o{ COLABORADOR_AGENCIA : "tem"
+    CONTAS ||--o{ TRANSACOES : "movimenta"
+
+    CLIENTES {
+        bigint cod_cliente PK
+        text primeiro_nome
+        text ultimo_nome
+        text email
+        text tipo_cliente
+        timestamp data_inclusao
+        text cpfcnpj
+        date data_nascimento
+        text endereco
+        text cep
+    }
+    CONTAS {
+        bigint num_conta PK
+        bigint cod_cliente FK
+        bigint cod_agencia FK
+        bigint cod_colaborador FK
+        text tipo_conta
+        timestamp data_abertura
+        numeric saldo_total
+        numeric saldo_disponivel
+        timestamp data_ultimo_lancamento
+    }
+    TRANSACOES {
+        bigint cod_transacao PK
+        bigint num_conta FK
+        timestamp data_transacao
+        text nome_transacao
+        numeric valor_transacao
+    }
+    PROPOSTAS_CREDITO {
+        bigint cod_proposta PK
+        bigint cod_cliente FK
+        bigint cod_colaborador FK
+        timestamp data_entrada_proposta
+        numeric taxa_juros_mensal
+        numeric valor_proposta
+        numeric valor_financiamento
+        numeric valor_entrada
+        numeric valor_prestacao
+        bigint quantidade_parcelas
+        bigint carencia
+        text status_proposta
+    }
+    AGENCIAS {
+        bigint cod_agencia PK
+        text nome
+        text endereco
+        text cidade
+        text uf
+        date data_abertura
+        text tipo_agencia
+    }
+    COLABORADORES {
+        bigint cod_colaborador PK
+        text primeiro_nome
+        text ultimo_nome
+        text email
+        text cpf
+        date data_nascimento
+        text endereco
+        text cep
+    }
+    COLABORADOR_AGENCIA {
+        bigint cod_colaborador PK, FK
+        bigint cod_agencia FK
+    }

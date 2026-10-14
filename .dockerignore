@@ -1,0 +1,16 @@
+# Contexto de build mínimo: as imagens só precisam de dags/, meltano/ e docker/
+.git
+.github
+**/.env
+**/.env.*
+!**/.env.example
+**/__pycache__
+**/*.pyc
+data/
+docs/
+scripts/
+tests/
+terraform/
+meltano/.meltano/
+*.zip
+*.log

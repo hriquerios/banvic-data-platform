@@ -1,0 +1,291 @@
+default_environment: local
+project_id: 223af49e-6f0f-44b8-b983-e94a4f4cdfe7
+send_anonymous_usage_stats: false
+
+# -----------------------------------------------------------------------------
+# Projeto Meltano - ingestão do ERP do BanVic (CSV -> PostgreSQL / schema raw)
+#
+# Os dois plugins são declarados aqui mesmo (namespace, executável, settings),
+# sem depender do Meltano Hub nem de lock files: o build da imagem fica
+# reprodutível e a lista de settings documenta exatamente o que é usado.
+#
+# Nenhuma credencial é escrita neste arquivo. A conexão do target é lida das
+# variáveis TARGET_POSTGRES_* (mapeamento automático do Meltano: <PLUGIN>_<SETTING>):
+#   - localmente: arquivo meltano/.env (ignorado pelo Git, ver .env.example)
+#   - no Kubernetes: Secret "banvic-loader-credentials", injetado apenas nos
+#     pods de ingestão criados pelo KubernetesPodOperator.
+# -----------------------------------------------------------------------------
+environments:
+  - name: local
+  - name: kubernetes
+
+plugins:
+  extractors:
+    # Extractor "pai": conhece os 7 arquivos, a tipagem de cada coluna e as
+    # colunas selecionadas. Pode ser usado para uma carga completa local:
+    #   meltano run tap-csv target-postgres
+    - name: tap-csv
+      namespace: tap_csv
+      executable: tap-csv
+      pip_url: git+https://github.com/MeltanoLabs/tap-csv.git@v1.3.2
+      capabilities: [catalog, discover, stream-maps]
+      settings:
+        - name: files
+          kind: array
+          description: Arquivos CSV (entity, path, keys e dialeto) - um por tabela
+        - name: add_metadata_columns
+          kind: boolean
+          description: Adiciona _sdc_source_file, _sdc_source_file_mtime e _sdc_source_lineno
+        - name: stream_maps
+          kind: object
+          description: Conversão de tipos por coluna (Singer SDK stream maps)
+      config:
+        add_metadata_columns: true
+        files:
+          - entity: agencias
+            path: $BANVIC_SOURCE_DIR/agencias.csv
+            keys: [cod_agencia]
+            encoding: utf-8
+            delimiter: ","
+            strict: true
+          - entity: clientes
+            path: $BANVIC_SOURCE_DIR/clientes.csv
+            keys: [cod_cliente]
+            encoding: utf-8
+            delimiter: ","
+            strict: true
+          - entity: colaboradores
+            path: $BANVIC_SOURCE_DIR/colaboradores.csv
+            keys: [cod_colaborador]
+            encoding: utf-8
+            delimiter: ","
+            strict: true
+          - entity: colaborador_agencia
+            path: $BANVIC_SOURCE_DIR/colaborador_agencia.csv
+            keys: [cod_colaborador]
+            encoding: utf-8
+            delimiter: ","
+            strict: true
+          - entity: contas
+            path: $BANVIC_SOURCE_DIR/contas.csv
+            keys: [num_conta]
+            encoding: utf-8
+            delimiter: ","
+            strict: true
+          - entity: propostas_credito
+            path: $BANVIC_SOURCE_DIR/propostas_credito.csv
+            keys: [cod_proposta]
+            encoding: utf-8
+            delimiter: ","
+            strict: true
+          - entity: transacoes
+            path: $BANVIC_SOURCE_DIR/transacoes.csv
+            keys: [cod_transacao]
+            encoding: utf-8
+            delimiter: ","
+            strict: true
+
+        # O tap-csv entrega todas as colunas como texto. Os stream maps do
+        # Singer SDK convertem cada coluna para o tipo original da fonte, e o
+        # tipo resultante é publicado no SCHEMA do Singer. Assim o
+        # target-postgres cria INTEGER/BIGINT, NUMERIC, DATE e TIMESTAMPTZ em
+        # vez de TEXT. Colunas não mapeadas permanecem como texto
+        # (nomes, e-mails, CPF/CNPJ, CEP...).
+        stream_maps:
+          agencias:
+            cod_agencia: int(cod_agencia)
+            data_abertura: datetime.date.fromisoformat(data_abertura)
+          clientes:
+            cod_cliente: int(cod_cliente)
+            data_inclusao: datetime.datetime.fromisoformat(data_inclusao.replace(' UTC', ''))
+            data_nascimento: datetime.date.fromisoformat(data_nascimento)
+          colaboradores:
+            cod_colaborador: int(cod_colaborador)
+            data_nascimento: datetime.date.fromisoformat(data_nascimento)
+          colaborador_agencia:
+            cod_colaborador: int(cod_colaborador)
+            cod_agencia: int(cod_agencia)
+          contas:
+            num_conta: int(num_conta)
+            cod_cliente: int(cod_cliente)
+            cod_agencia: int(cod_agencia)
+            cod_colaborador: int(cod_colaborador)
+            data_abertura: datetime.datetime.fromisoformat(data_abertura.replace(' UTC', ''))
+            saldo_total: float(saldo_total)
+            saldo_disponivel: float(saldo_disponivel)
+            data_ultimo_lancamento: datetime.datetime.fromisoformat(data_ultimo_lancamento.replace(' UTC', ''))
+          propostas_credito:
+            cod_proposta: int(cod_proposta)
+            cod_cliente: int(cod_cliente)
+            cod_colaborador: int(cod_colaborador)
+            data_entrada_proposta: datetime.datetime.fromisoformat(data_entrada_proposta.replace(' UTC', ''))
+            taxa_juros_mensal: float(taxa_juros_mensal)
+            valor_proposta: float(valor_proposta)
+            valor_financiamento: float(valor_financiamento)
+            valor_entrada: float(valor_entrada)
+            valor_prestacao: float(valor_prestacao)
+            quantidade_parcelas: int(quantidade_parcelas)
+            carencia: int(carencia)
+          transacoes:
+            cod_transacao: int(cod_transacao)
+            num_conta: int(num_conta)
+            data_transacao: datetime.datetime.fromisoformat(data_transacao.replace(' UTC', ''))
+            valor_transacao: float(valor_transacao)
+
+      # Carga inicial do BanVic: snapshot completo (Full Refresh) de todas as
+      # streams. O tap-csv não possui estado incremental.
+      metadata:
+        "*":
+          replication-method: FULL_TABLE
+
+      # Seleção explícita de streams e atributos (equivalente a executar
+      # `meltano select tap-csv <stream> <atributo>` para cada coluna).
+      # Colunas novas que surgirem na origem NÃO são carregadas sem revisão.
+      select:
+        - agencias.cod_agencia
+        - agencias.nome
+        - agencias.endereco
+        - agencias.cidade
+        - agencias.uf
+        - agencias.data_abertura
+        - agencias.tipo_agencia
+        - agencias._sdc_source_file
+        - agencias._sdc_source_file_mtime
+        - agencias._sdc_source_lineno
+
+        - clientes.cod_cliente
+        - clientes.primeiro_nome
+        - clientes.ultimo_nome
+        - clientes.email
+        - clientes.tipo_cliente
+        - clientes.data_inclusao
+        - clientes.cpfcnpj
+        - clientes.data_nascimento
+        - clientes.endereco
+        - clientes.cep
+        - clientes._sdc_source_file
+        - clientes._sdc_source_file_mtime
+        - clientes._sdc_source_lineno
+
+        - colaboradores.cod_colaborador
+        - colaboradores.primeiro_nome
+        - colaboradores.ultimo_nome
+        - colaboradores.email
+        - colaboradores.cpf
+        - colaboradores.data_nascimento
+        - colaboradores.endereco
+        - colaboradores.cep
+        - colaboradores._sdc_source_file
+        - colaboradores._sdc_source_file_mtime
+        - colaboradores._sdc_source_lineno
+
+        - colaborador_agencia.cod_colaborador
+        - colaborador_agencia.cod_agencia
+        - colaborador_agencia._sdc_source_file
+        - colaborador_agencia._sdc_source_file_mtime
+        - colaborador_agencia._sdc_source_lineno
+
+        - contas.num_conta
+        - contas.cod_cliente
+        - contas.cod_agencia
+        - contas.cod_colaborador
+        - contas.tipo_conta
+        - contas.data_abertura
+        - contas.saldo_total
+        - contas.saldo_disponivel
+        - contas.data_ultimo_lancamento
+        - contas._sdc_source_file
+        - contas._sdc_source_file_mtime
+        - contas._sdc_source_lineno
+
+        - propostas_credito.cod_proposta
+        - propostas_credito.cod_cliente
+        - propostas_credito.cod_colaborador
+        - propostas_credito.data_entrada_proposta
+        - propostas_credito.taxa_juros_mensal
+        - propostas_credito.valor_proposta
+        - propostas_credito.valor_financiamento
+        - propostas_credito.valor_entrada
+        - propostas_credito.valor_prestacao
+        - propostas_credito.quantidade_parcelas
+        - propostas_credito.carencia
+        - propostas_credito.status_proposta
+        - propostas_credito._sdc_source_file
+        - propostas_credito._sdc_source_file_mtime
+        - propostas_credito._sdc_source_lineno
+
+        - transacoes.cod_transacao
+        - transacoes.num_conta
+        - transacoes.data_transacao
+        - transacoes.nome_transacao
+        - transacoes.valor_transacao
+        - transacoes._sdc_source_file
+        - transacoes._sdc_source_file_mtime
+        - transacoes._sdc_source_lineno
+
+    # Extractors "filhos": herdam toda a configuração, tipagem e seleção do
+    # tap-csv e restringem a execução a UMA stream via select_filter.
+    # Cada tabela vira uma task independente no Airflow (falhas e retries
+    # isolados por tabela).
+    - name: tap-banvic-agencias
+      inherit_from: tap-csv
+      select_filter: [agencias]
+    - name: tap-banvic-clientes
+      inherit_from: tap-csv
+      select_filter: [clientes]
+    - name: tap-banvic-colaboradores
+      inherit_from: tap-csv
+      select_filter: [colaboradores]
+    - name: tap-banvic-colaborador-agencia
+      inherit_from: tap-csv
+      select_filter: [colaborador_agencia]
+    - name: tap-banvic-contas
+      inherit_from: tap-csv
+      select_filter: [contas]
+    - name: tap-banvic-propostas-credito
+      inherit_from: tap-csv
+      select_filter: [propostas_credito]
+    - name: tap-banvic-transacoes
+      inherit_from: tap-csv
+      select_filter: [transacoes]
+
+  loaders:
+    - name: target-postgres
+      namespace: target_postgres
+      executable: target-postgres
+      pip_url: meltanolabs-target-postgres==0.8.0
+      capabilities: [about, stream-maps, schema-flattening, validate-records, hard-delete, activate-version]
+      settings:
+        - name: host
+        - name: port
+          kind: integer
+        - name: database
+        - name: user
+        - name: password
+          kind: password
+          sensitive: true
+        - name: default_target_schema
+        - name: load_method
+          kind: options
+          options:
+            - {label: Append only, value: append-only}
+            - {label: Upsert, value: upsert}
+            - {label: Overwrite, value: overwrite}
+        - name: validate_records
+          kind: boolean
+        - name: add_record_metadata
+          kind: boolean
+        - name: activate_version
+          kind: boolean
+        - name: hard_delete
+          kind: boolean
+      config:
+        # host/port/database/user/password: variáveis TARGET_POSTGRES_*
+        default_target_schema: raw
+        # Full Refresh idempotente: cada execução substitui a tabela inteira
+        # pelo snapshot atual do arquivo (sem duplicar registros).
+        load_method: overwrite
+        validate_records: true
+        add_record_metadata: true
+        activate_version: false
+        hard_delete: false
